@@ -35,8 +35,6 @@ gemini_client = OpenAI(
     api_key=GEMINI_API_KEY,
 )
 
-GEMINI_MODEL = "gemini-3.5-flash-lite"  # Confirmed working model
-
 # --- Tool 1: web search (unchanged from Phase 1) -----------------------
 
 
@@ -129,6 +127,38 @@ def wikipedia_search(query: str) -> str:
         return f"Wikipedia search failed: {e}"
 
 
+# --- Tool 4: Hacker News (new) ------------------------------------------
+
+
+def hackernews_search(query: str, max_results: int = 5) -> str:
+    """Current tech/AI/startup news via Hacker News's free Algolia
+    search API — no key needed. Sorted by date, not relevance, since
+    'today's news' needs recency, not just topical match."""
+    try:
+        resp = requests.get(
+            "https://hn.algolia.com/api/v1/search_by_date",
+            params={"query": query, "tags": "story", "hitsPerPage": max_results},
+            timeout=8,
+        )
+        resp.raise_for_status()
+        hits = resp.json().get("hits", [])
+    except Exception as e:
+        return f"Hacker News search failed: {e}"
+
+    if not hits:
+        return "No Hacker News stories found."
+
+    lines = []
+    for h in hits:
+        title = h.get("title") or h.get("story_title") or "(untitled)"
+        url = h.get("url") or h.get("story_url") or f"https://news.ycombinator.com/item?id={h.get('objectID')}"
+        points = h.get("points", 0)
+        comments = h.get("num_comments", 0)
+        date = (h.get("created_at") or "")[:10]
+        lines.append(f"- {title} ({date}, {points} points, {comments} comments) ({url})")
+    return "\n".join(lines)
+
+
 # --- Tool registry -------------------------------------------------------
 
 TOOLS = [
@@ -168,12 +198,25 @@ TOOLS = [
             },
         },
     },
+    {
+        "type": "function",
+        "function": {
+            "name": "hackernews_search",
+            "description": "Search current tech, AI, and startup news and discussion on Hacker News, sorted by recency. Use this for 'today's/latest/recent' tech or AI news questions instead of web_search.",
+            "parameters": {
+                "type": "object",
+                "properties": {"query": {"type": "string"}},
+                "required": ["query"],
+            },
+        },
+    },
 ]
 
 TOOL_FUNCTIONS = {
     "web_search": web_search,
     "arxiv_search": arxiv_search,
     "wikipedia_search": wikipedia_search,
+    "hackernews_search": hackernews_search,
 }
 
 # --- LLM calling, with automatic fallback --------------------------------
@@ -209,7 +252,7 @@ def call_llm(messages, tools=None):
     except Exception as e:
         print(f"[Groq unavailable ({e}), falling back to Gemini]")
         return gemini_client.chat.completions.create(
-            model=GEMINI_MODEL,
+            model="gemini-2.0-flash-lite",
             messages=messages,
             tools=tools,
         )
@@ -218,53 +261,43 @@ def call_llm(messages, tools=None):
 # --- The ReAct loop, now with 3 tools and multi-step support -------------
 
 
-def _run_agent_loop(user_query: str, max_steps: int = 10):
+def _run_agent_loop(user_query: str, max_steps: int = 6):
     """Internal: runs the ReAct loop and returns (answer, steps_log).
     steps_log is a list of {"tool": name, "args": {...}, "result": str}
     for every tool call made along the way — this is what lets
-    run_agent_with_details() report back which sources it actually used.
-
-    On the final step we inject a "stop and answer" instruction so the
-    agent always returns a real answer rather than the fallback message."""
-    system_prompt = (
-        "You are RICE, a research agent with three tools: "
-        "web_search (general/current info), arxiv_search "
-        "(academic papers), and wikipedia_search (factual "
-        "background). Use whichever fit the question — you can "
-        "call more than one if a question needs both academic "
-        "and general context. If sources disagree, say so "
-        "explicitly instead of picking one silently. "
-        "Once you have enough information, synthesize a clear, "
-        "well-structured answer directly without calling more tools."
-    )
+    run_agent_with_details() report back which sources it actually used."""
     messages = [
-        {"role": "system", "content": system_prompt},
+        {
+            "role": "system",
+            "content": (
+                "You are RICE, a research agent with four tools: "
+                "web_search (general/current info), arxiv_search "
+                "(academic papers), wikipedia_search (factual "
+                "background), and hackernews_search (current tech/AI/"
+                "startup news, sorted by recency). For 'today's/latest/"
+                "recent' tech or AI news specifically, prefer "
+                "hackernews_search over web_search — it's built for "
+                "recency, not just topical relevance. Use whichever "
+                "tools fit the question — you can call more than one "
+                "if a question needs multiple kinds of context. If "
+                "sources disagree, say so explicitly instead of "
+                "picking one silently. Otherwise answer directly, "
+                "briefly, and clearly."
+            ),
+        },
         {"role": "user", "content": user_query},
     ]
 
     steps_log = []
+    tool_usage_count = {}
+    nudged_tools = set()
 
-    for step in range(max_steps):
-        # On the last step, force the model to stop calling tools and answer.
-        is_last_step = step == max_steps - 1
-        if is_last_step and steps_log:
-            messages.append({
-                "role": "user",
-                "content": (
-                    "You have gathered enough information. "
-                    "Please now provide your final, complete answer "
-                    "based on all research done so far. Do NOT call any more tools."
-                ),
-            })
-            response = call_llm(messages, tools=None)  # No tools on final forced step
-        else:
-            response = call_llm(messages, tools=TOOLS)
-
+    for _ in range(max_steps):
+        response = call_llm(messages, tools=TOOLS)
         message = response.choices[0].message
 
         if not message.tool_calls:
-            # Model returned a direct answer — we're done.
-            return message.content or "No answer generated.", steps_log
+            return message.content, steps_log
 
         messages.append(message_to_dict(message))
 
@@ -284,26 +317,48 @@ def _run_agent_loop(user_query: str, max_steps: int = 10):
                 }
             )
 
-    # Fallback: ask the model to summarize with no tools at all.
-    messages.append({
-        "role": "user",
-        "content": "Summarize all findings so far into a final answer.",
-    })
+            tool_usage_count[func_name] = tool_usage_count.get(func_name, 0) + 1
+
+        # Guardrail: if a tool has been called 2+ times and it hasn't
+        # helped, nudge the model to stop retrying it and either switch
+        # tools or answer with what it already has. This is the exact
+        # fix for the "called web_search 6 times, never answered" bug.
+        for func_name, count in tool_usage_count.items():
+            if count >= 2 and func_name not in nudged_tools:
+                nudged_tools.add(func_name)
+                messages.append(
+                    {
+                        "role": "system",
+                        "content": (
+                            f"You've called {func_name} {count} times. "
+                            "Rewording the same query rarely helps — if it "
+                            "hasn't returned useful results, either try a "
+                            "genuinely different tool, or answer now using "
+                            "whatever you've already gathered, noting any "
+                            "limitations. Do not call the same tool again "
+                            "with a minor rewording."
+                        ),
+                    }
+                )
+
+    # max_steps exhausted: force one last tools-off call so the model
+    # synthesizes its best answer from whatever's in the transcript,
+    # instead of returning a dead-end message with nothing useful in it.
     try:
-        final_response = call_llm(messages, tools=None)
-        return final_response.choices[0].message.content or "Research complete — see steps for details.", steps_log
+        final = call_llm(messages, tools=None)
+        return final.choices[0].message.content, steps_log
     except Exception:
-        return "Research complete — see steps for details.", steps_log
+        return "Reached max steps without a final answer — try a narrower question.", steps_log
 
 
-def run_agent(user_query: str, max_steps: int = 10) -> str:
+def run_agent(user_query: str, max_steps: int = 6) -> str:
     """Plain-string interface — kept for the standalone CLI below and
     for anything that just wants the answer text."""
     answer, _ = _run_agent_loop(user_query, max_steps)
     return answer
 
 
-def run_agent_with_details(user_query: str, max_steps: int = 10) -> dict:
+def run_agent_with_details(user_query: str, max_steps: int = 6) -> dict:
     """Dict interface for server.py: {"answer": str, "steps": [...]}.
     Each step records which tool ran, what arguments the LLM gave it,
     and what it returned — this is what powers the "Copy Data" /
