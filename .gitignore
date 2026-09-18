@@ -35,9 +35,13 @@ yarn-debug.log*
 yarn-error.log*
 pnpm-debug.log*
 
+# ChromaDB vector store (runtime data)
+chroma_db/
+
 # Operating System & IDE
 .DS_Store
 Thumbs.db
 .vscode/
 .idea/
 *.swp
+*.egg-info/

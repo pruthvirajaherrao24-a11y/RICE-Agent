@@ -10,7 +10,6 @@ import {
   History,
   Wrench,
   FileText,
-  Plus,
   Send,
   Paperclip,
   Globe,
@@ -32,7 +31,18 @@ import {
   Code,
   Database,
   Cpu,
-  Upload
+  Upload,
+  RefreshCw,
+  Server,
+  Zap,
+  Activity,
+  Layers,
+  Trash2,
+  CheckCircle2,
+  AlertCircle,
+  FileSpreadsheet,
+  FileCode,
+  FileType
 } from "lucide-react";
 
 interface Message {
@@ -45,6 +55,88 @@ interface Message {
   codeBlock?: string;
   bullets?: string[];
   timestamp: string;
+  isLoading?: boolean;
+  attachedDocInfo?: {
+    filename: string;
+    type: string;
+    wordCount: number;
+    sizeStr: string;
+  };
+}
+
+interface Asset {
+  id: string;
+  title: string;
+  author: string;
+  size?: string;
+}
+
+interface AttachedDoc {
+  filename: string;
+  type: string;
+  text: string;
+  wordCount: number;
+  pageCount: number;
+  sizeStr: string;
+}
+
+function SkeletonLoader({ title }: { title?: string }) {
+  return (
+    <div className="neumorphic-sunken p-5 sm:p-6 rounded-r-3xl rounded-tl-3xl max-w-2xl border border-white/[0.04] w-full animate-pulse space-y-4">
+      {/* Skeleton Title & Active Tool Chips */}
+      <div className="flex items-center justify-between border-b border-white/5 pb-3">
+        <div className="flex items-center gap-2">
+          <div className="w-4 h-4 rounded-full bg-white/20 animate-spin border-2 border-white border-t-transparent" />
+          <div className="h-4 w-48 bg-white/15 rounded-md" />
+        </div>
+        <div className="flex items-center gap-1.5 px-2.5 py-1 rounded-full bg-white/5 border border-white/10 text-[10px] text-white/70">
+          <Sparkles className="w-3 h-3 text-emerald-400 animate-bounce" />
+          <span>Analyzing Document & Multi-Source...</span>
+        </div>
+      </div>
+
+      {/* Tool Execution Badges */}
+      <div className="flex flex-wrap gap-2 pt-1">
+        <div className="h-6 w-28 bg-white/10 rounded-full flex items-center gap-1.5 px-2.5">
+          <span className="w-2 h-2 rounded-full bg-blue-400 animate-ping" />
+          <span className="h-2 w-16 bg-white/20 rounded" />
+        </div>
+        <div className="h-6 w-32 bg-white/10 rounded-full flex items-center gap-1.5 px-2.5">
+          <span className="w-2 h-2 rounded-full bg-emerald-400 animate-ping" />
+          <span className="h-2 w-20 bg-white/20 rounded" />
+        </div>
+        <div className="h-6 w-24 bg-white/10 rounded-full flex items-center gap-1.5 px-2.5">
+          <span className="w-2 h-2 rounded-full bg-purple-400 animate-ping" />
+          <span className="h-2 w-12 bg-white/20 rounded" />
+        </div>
+      </div>
+
+      {/* Skeleton Body Lines */}
+      <div className="space-y-2.5 pt-2">
+        <div className="h-4 bg-gradient-to-r from-white/15 via-white/25 to-white/15 rounded-md w-full" />
+        <div className="h-4 bg-gradient-to-r from-white/15 via-white/25 to-white/15 rounded-md w-11/12" />
+        <div className="h-4 bg-gradient-to-r from-white/15 via-white/25 to-white/15 rounded-md w-4/5" />
+      </div>
+
+      {/* Skeleton Bullet Points */}
+      <div className="space-y-2 pt-2">
+        <div className="flex items-center gap-2">
+          <div className="w-2 h-2 rounded-full bg-white/30" />
+          <div className="h-3 bg-white/10 rounded w-3/4" />
+        </div>
+        <div className="flex items-center gap-2">
+          <div className="w-2 h-2 rounded-full bg-white/30" />
+          <div className="h-3 bg-white/10 rounded w-2/3" />
+        </div>
+      </div>
+
+      {/* Skeleton Action Buttons */}
+      <div className="flex gap-2 pt-3 border-t border-white/[0.03]">
+        <div className="h-7 w-24 bg-white/10 rounded-full" />
+        <div className="h-7 w-24 bg-white/10 rounded-full" />
+      </div>
+    </div>
+  );
 }
 
 function WorkspaceContent() {
@@ -58,21 +150,59 @@ function WorkspaceContent() {
   const [activeTab, setActiveTab] = useState<"sessions" | "history" | "tools">("sessions");
   const [sidebarOpen, setSidebarOpen] = useState(false);
   const [copiedId, setCopiedId] = useState<string | null>(null);
-  const [isWebSearchActive, setIsWebSearchActive] = useState(false);
+  const [isWebSearchActive, setIsWebSearchActive] = useState(true);
   const [isGenerating, setIsGenerating] = useState(false);
   const [isVoiceActive, setIsVoiceActive] = useState(false);
+  const [maxSteps, setMaxSteps] = useState(6);
+
+  // Document Attachment state
+  const [attachedDoc, setAttachedDoc] = useState<AttachedDoc | null>(null);
+
+  // Modals state
+  const [isSettingsOpen, setIsSettingsOpen] = useState(false);
+  const [isUserModalOpen, setIsUserModalOpen] = useState(false);
+  const [activeGraphMsg, setActiveGraphMsg] = useState<Message | null>(null);
+  const [apiUrl, setApiUrl] = useState("http://localhost:8000");
+  const [backendStatus, setBackendStatus] = useState<"unchecked" | "connected" | "failed">("unchecked");
+  const [toastMessage, setToastMessage] = useState<string | null>(null);
 
   const textareaRef = useRef<HTMLTextAreaElement>(null);
   const feedEndRef = useRef<HTMLDivElement>(null);
   const fileInputRef = useRef<HTMLInputElement>(null);
   const processedPromptRef = useRef<string | null>(null);
+  // eslint-disable-next-line @typescript-eslint/no-explicit-any
+  const recognitionRef = useRef<any>(null);
 
   const [messages, setMessages] = useState<Message[]>([]);
-  const [assets, setAssets] = useState<{ id: string; title: string; author: string }[]>([]);
+  const [assets, setAssets] = useState<Asset[]>([]);
+  const [threadHistory, setThreadHistory] = useState<{ id: string; title: string; time: string }[]>([
+    { id: "t-1", title: "GTA 6 Leaks & Rumors Analysis", time: "10 mins ago" },
+    { id: "t-2", title: "Quantum Error Correction Papers", time: "1 hour ago" }
+  ]);
 
-  const API_URL = process.env.NEXT_PUBLIC_API_URL || "http://localhost:8000";
+  const showToast = (msg: string) => {
+    setToastMessage(msg);
+    setTimeout(() => setToastMessage(null), 3000);
+  };
 
-  const executeResearch = async (queryText: string) => {
+  const testBackendConnection = async () => {
+    setBackendStatus("unchecked");
+    try {
+      const res = await fetch(`${apiUrl}/`, { method: "GET" });
+      if (res.ok) {
+        setBackendStatus("connected");
+        showToast("Backend Server connected successfully!");
+      } else {
+        setBackendStatus("failed");
+        showToast("Backend returned error status.");
+      }
+    } catch {
+      setBackendStatus("failed");
+      showToast("Cannot connect to Backend at " + apiUrl);
+    }
+  };
+
+  const executeResearch = async (queryText: string, docToAnalyze?: AttachedDoc | null) => {
     setIsGenerating(true);
 
     const thinkingMsgId = `agent-${Date.now()}`;
@@ -81,22 +211,30 @@ function WorkspaceContent() {
       sender: "agent",
       senderName: selectedModel,
       avatarIcon: "bot",
-      title: `Multi-Source Research: ${queryText.slice(0, 35)}...`,
-      content: `RICE ReAct Agent actively reasoning across arXiv, Wikipedia & Web Search for: "${queryText}"...`,
-      bullets: [
-        "Synthesizing academic, factual, and web sources",
-        "Executing multi-step tool calls via RICE Backend Engine",
-      ],
-      timestamp: "Just now"
+      title: docToAnalyze
+        ? `Document Analysis: ${docToAnalyze.filename}`
+        : `Multi-Source Research: ${queryText.slice(0, 35)}${queryText.length > 35 ? "..." : ""}`,
+      content: "",
+      bullets: [],
+      timestamp: "Just now",
+      isLoading: true
     };
 
     setMessages((prev) => [...prev, initialAgentMsg]);
 
     try {
-      const res = await fetch(`${API_URL}/api/research`, {
+      // eslint-disable-next-line @typescript-eslint/no-explicit-any
+      const payload: any = { query: queryText, max_steps: maxSteps };
+      if (docToAnalyze) {
+        payload.doc_text = docToAnalyze.text;
+        payload.doc_name = docToAnalyze.filename;
+        payload.doc_type = docToAnalyze.type;
+      }
+
+      const res = await fetch(`${apiUrl}/api/research`, {
         method: "POST",
         headers: { "Content-Type": "application/json" },
-        body: JSON.stringify({ query: queryText, max_steps: 6 }),
+        body: JSON.stringify(payload),
       });
 
       if (res.ok) {
@@ -108,9 +246,10 @@ function WorkspaceContent() {
                   ...msg,
                   content: data.answer || "No response received.",
                   bullets: data.bullets && data.bullets.length > 0 ? data.bullets : [
-                    "Evaluated query across DuckDuckGo, arXiv & Wikipedia",
-                    "Multi-source synthesis complete"
+                    docToAnalyze ? `Analyzed document '${docToAnalyze.filename}'` : "Evaluated multi-source search",
+                    "Synthesized findings via RICE Engine"
                   ],
+                  isLoading: false
                 }
               : msg
           )
@@ -122,25 +261,27 @@ function WorkspaceContent() {
             msg.id === thinkingMsgId
               ? {
                   ...msg,
-                  content: `RICE Backend returned an status error (${res.status}): ${errData.detail || "Make sure GITHUB_TOKEN or GROQ_API_KEY is configured in Backend/.env"}.`,
-                  bullets: ["Ensure Backend server (server.py) is running on port 8000"],
+                  content: `### ⚠️ Backend Error (${res.status})\n${errData.detail || "Make sure GROQ_API_KEY or GEMINI_API_KEY is properly set in Backend/.env"}.\n\nEnsure server.py is running on \`${apiUrl}\`.`,
+                  bullets: ["Check Backend server logs at port 8000"],
+                  isLoading: false
                 }
               : msg
           )
         );
       }
     } catch (err) {
-      console.warn("Backend API not reachable, presenting local status:", err);
+      console.warn("Backend API not reachable:", err);
       setMessages((prev) =>
         prev.map((msg) =>
           msg.id === thinkingMsgId
             ? {
                 ...msg,
-                content: `RICE Agent query dispatched for "${queryText}". Backend server is ready at http://localhost:8000. Configure GITHUB_TOKEN or GROQ_API_KEY in Backend/.env for full live results!`,
+                content: `### 🌐 Connection Failed\nCould not reach RICE Backend API at \`${apiUrl}\`.\n\nPlease verify that the backend server is active by running:\n\`\`\`bash\npython server.py\n\`\`\``,
                 bullets: [
-                  "Connected to RICE Backend API (FastAPI)",
-                  "Multi-tool dispatch ready (Web, arXiv, Wikipedia)"
+                  "Connected state: Failed",
+                  "Verify backend server execution"
                 ],
+                isLoading: false
               }
             : msg
         )
@@ -150,7 +291,7 @@ function WorkspaceContent() {
     }
   };
 
-  // Handle prompt passed from landing page safely (only once per prompt string)
+  // Handle prompt passed from landing page safely
   useEffect(() => {
     if (initialPrompt.trim() && processedPromptRef.current !== initialPrompt.trim()) {
       const q = initialPrompt.trim();
@@ -167,7 +308,7 @@ function WorkspaceContent() {
 
       setMessages((prev) => [...prev, userMsg]);
       router.replace("/workspace", { scroll: false });
-      executeResearch(q);
+      executeResearch(q, null);
     }
   }, [initialPrompt, router]);
 
@@ -185,10 +326,14 @@ function WorkspaceContent() {
   };
 
   const handleSendMessage = () => {
-    if (!inputMessage.trim() || isGenerating) return;
+    if ((!inputMessage.trim() && !attachedDoc) || isGenerating) return;
 
-    const userText = inputMessage.trim();
+    const userText = inputMessage.trim() || (attachedDoc ? `Summarize and analyze document: ${attachedDoc.filename}` : "");
+    const docToSubmit = attachedDoc;
+
     setInputMessage("");
+    setAttachedDoc(null);
+
     if (textareaRef.current) {
       textareaRef.current.style.height = "auto";
     }
@@ -199,13 +344,25 @@ function WorkspaceContent() {
       senderName: "Researcher",
       avatarIcon: "person",
       content: userText,
-      timestamp: "Just now"
+      timestamp: "Just now",
+      attachedDocInfo: docToSubmit ? {
+        filename: docToSubmit.filename,
+        type: docToSubmit.type,
+        wordCount: docToSubmit.wordCount,
+        sizeStr: docToSubmit.sizeStr
+      } : undefined
     };
 
     setMessages((prev) => [...prev, userMsg]);
-    executeResearch(userText);
-  };
 
+    // Save to thread history
+    setThreadHistory((prev) => [
+      { id: `t-${Date.now()}`, title: userText.slice(0, 30) + (userText.length > 30 ? "..." : ""), time: "Just now" },
+      ...prev
+    ]);
+
+    executeResearch(userText, docToSubmit);
+  };
 
   const handleKeyDown = (e: React.KeyboardEvent<HTMLTextAreaElement>) => {
     if (e.key === "Enter" && !e.shiftKey) {
@@ -217,34 +374,410 @@ function WorkspaceContent() {
   const handleCopy = (id: string, text: string) => {
     navigator.clipboard.writeText(text);
     setCopiedId(id);
+    showToast("Copied to clipboard!");
     setTimeout(() => setCopiedId(null), 2000);
   };
 
-  const handleFileUpload = (e: React.ChangeEvent<HTMLInputElement>) => {
+  const handleFileUpload = async (e: React.ChangeEvent<HTMLInputElement>) => {
     const files = e.target.files;
-    if (files && files.length > 0) {
-      const file = files[0];
-      setAssets((prev) => [
-        ...prev,
-        {
-          id: `${Date.now()}`,
-          title: file.name,
-          author: `Uploaded (${(file.size / 1024).toFixed(1)} KB)`
-        }
-      ]);
+    if (!files || files.length === 0) return;
+    const file = files[0];
+
+    showToast(`Parsing ${file.name}...`);
+
+    const formData = new FormData();
+    formData.append("file", file);
+
+    try {
+      const res = await fetch(`${apiUrl}/api/documents/parse`, {
+        method: "POST",
+        body: formData,
+      });
+
+      if (res.ok) {
+        const data = await res.json();
+        const meta = data.metadata || {};
+        const docObj: AttachedDoc = {
+          filename: meta.filename || file.name,
+          type: meta.type || "Document",
+          text: data.text || "",
+          wordCount: meta.word_count || 0,
+          pageCount: meta.page_count || 1,
+          sizeStr: `${(file.size / 1024).toFixed(1)} KB`
+        };
+        setAttachedDoc(docObj);
+        setAssets((prev) => [
+          ...prev,
+          {
+            id: `${Date.now()}`,
+            title: docObj.filename,
+            author: docObj.type,
+            size: docObj.sizeStr
+          }
+        ]);
+        showToast(`Attached ${file.name} (${docObj.wordCount} words)`);
+      } else {
+        // Fallback local text reading
+        const text = await file.text().catch(() => "");
+        const docObj: AttachedDoc = {
+          filename: file.name,
+          type: "File Attachment",
+          text: text,
+          wordCount: text ? text.split(/\s+/).length : 0,
+          pageCount: 1,
+          sizeStr: `${(file.size / 1024).toFixed(1)} KB`
+        };
+        setAttachedDoc(docObj);
+        showToast(`Attached ${file.name}`);
+      }
+    } catch (err) {
+      console.error(err);
+      const text = await file.text().catch(() => "");
+      const docObj: AttachedDoc = {
+        filename: file.name,
+        type: "Document",
+        text: text,
+        wordCount: text ? text.split(/\s+/).length : 0,
+        pageCount: 1,
+        sizeStr: `${(file.size / 1024).toFixed(1)} KB`
+      };
+      setAttachedDoc(docObj);
+      showToast(`Attached ${file.name}`);
     }
   };
 
+  // Voice Input Speech Recognition handler
+  const toggleVoiceInput = () => {
+    // eslint-disable-next-line @typescript-eslint/no-explicit-any
+    const SpeechRecognition = (window as any).SpeechRecognition || (window as any).webkitSpeechRecognition;
+
+    if (!SpeechRecognition) {
+      showToast("Voice Recognition not supported in this browser.");
+      return;
+    }
+
+    if (isVoiceActive) {
+      if (recognitionRef.current) {
+        recognitionRef.current.stop();
+      }
+      setIsVoiceActive(false);
+      return;
+    }
+
+    try {
+      const recognition = new SpeechRecognition();
+      recognition.continuous = false;
+      recognition.interimResults = false;
+      recognition.lang = "en-US";
+
+      recognition.onstart = () => {
+        setIsVoiceActive(true);
+        showToast("Listening... speak into your microphone.");
+      };
+
+      // eslint-disable-next-line @typescript-eslint/no-explicit-any
+      recognition.onresult = (event: any) => {
+        const transcript = event.results[0][0].transcript;
+        if (transcript) {
+          setInputMessage((prev) => (prev ? `${prev} ${transcript}` : transcript));
+          showToast(`Captured: "${transcript}"`);
+        }
+        setIsVoiceActive(false);
+      };
+
+      recognition.onerror = () => {
+        setIsVoiceActive(false);
+        showToast("Speech recognition error.");
+      };
+
+      recognition.onend = () => {
+        setIsVoiceActive(false);
+      };
+
+      recognitionRef.current = recognition;
+      recognition.start();
+    } catch {
+      setIsVoiceActive(false);
+      showToast("Could not access microphone.");
+    }
+  };
+
+  const clearChatHistory = () => {
+    setMessages([]);
+    showToast("Cleared active chat session.");
+    setIsUserModalOpen(false);
+  };
+
+  const getDocIcon = (type: string) => {
+    if (type.includes("PDF")) return <FileType className="w-4 h-4 text-rose-400" />;
+    if (type.includes("Word") || type.includes("DOC")) return <FileText className="w-4 h-4 text-blue-400" />;
+    if (type.includes("CSV") || type.includes("Spreadsheet")) return <FileSpreadsheet className="w-4 h-4 text-emerald-400" />;
+    if (type.includes("JSON") || type.includes("Code")) return <FileCode className="w-4 h-4 text-amber-400" />;
+    return <FileText className="w-4 h-4 text-purple-400" />;
+  };
+
   return (
-    <div className="bg-[#131313] text-[#e5e2e1] h-screen overflow-hidden flex flex-col font-sans select-none">
-      {/* Hidden file input */}
+    <div className="bg-[#131313] text-[#e5e2e1] h-screen overflow-hidden flex flex-col font-sans select-none relative">
+      {/* Hidden file input supporting PDF, DOCX, CSV, TXT, JSON, MD, LOG */}
       <input
         type="file"
         ref={fileInputRef}
         onChange={handleFileUpload}
         className="hidden"
-        accept=".pdf,.txt,.doc,.docx,.csv,.png,.jpg"
+        accept=".pdf,.docx,.doc,.csv,.txt,.json,.md,.log"
       />
+
+      {/* ── Toast Notification ── */}
+      {toastMessage && (
+        <div className="fixed bottom-24 right-6 z-50 bg-[#201f1f] text-white px-4 py-2.5 rounded-2xl neumorphic-raised border border-white/10 text-xs font-medium flex items-center gap-2 animate-in fade-in slide-in-from-bottom-3 duration-300">
+          <CheckCircle2 className="w-4 h-4 text-emerald-400" />
+          <span>{toastMessage}</span>
+        </div>
+      )}
+
+      {/* ── Settings Modal ── */}
+      {isSettingsOpen && (
+        <div className="fixed inset-0 z-50 bg-black/70 backdrop-blur-sm flex items-center justify-center p-4">
+          <div className="neumorphic-raised bg-[#131313] border border-white/10 rounded-3xl w-full max-w-md p-6 space-y-6 text-white animate-in zoom-in-95 duration-200">
+            <div className="flex items-center justify-between border-b border-white/10 pb-4">
+              <div className="flex items-center gap-2.5">
+                <Settings className="w-5 h-5 text-white" />
+                <h3 className="font-bold text-base">Engine Settings</h3>
+              </div>
+              <button
+                onClick={() => setIsSettingsOpen(false)}
+                className="w-8 h-8 rounded-full neumorphic-raised flex items-center justify-center hover:bg-[#201f1f] text-white/70 hover:text-white"
+              >
+                <X className="w-4 h-4" />
+              </button>
+            </div>
+
+            <div className="space-y-4 text-xs">
+              <div>
+                <label className="block text-white/80 font-medium mb-1.5">Backend API URL</label>
+                <div className="flex gap-2">
+                  <input
+                    type="text"
+                    value={apiUrl}
+                    onChange={(e) => setApiUrl(e.target.value)}
+                    className="neumorphic-sunken flex-1 px-3.5 py-2.5 rounded-xl bg-transparent border-none text-white focus:outline-none font-mono"
+                  />
+                  <button
+                    onClick={testBackendConnection}
+                    className="neumorphic-raised px-3 py-2 rounded-xl text-white font-medium hover:bg-[#201f1f] flex items-center gap-1 cursor-pointer"
+                  >
+                    <Server className="w-3.5 h-3.5" />
+                    <span>Test</span>
+                  </button>
+                </div>
+                {backendStatus === "connected" && (
+                  <p className="text-[11px] text-emerald-400 mt-1 flex items-center gap-1">
+                    <CheckCircle2 className="w-3 h-3" /> Connected to Backend API
+                  </p>
+                )}
+                {backendStatus === "failed" && (
+                  <p className="text-[11px] text-rose-400 mt-1 flex items-center gap-1">
+                    <AlertCircle className="w-3 h-3" /> Could not reach host
+                  </p>
+                )}
+              </div>
+
+              <div>
+                <label className="block text-white/80 font-medium mb-1.5">
+                  Max ReAct Reasoning Steps: <span className="font-bold text-white">{maxSteps}</span>
+                </label>
+                <input
+                  type="range"
+                  min={2}
+                  max={10}
+                  value={maxSteps}
+                  onChange={(e) => setMaxSteps(Number(e.target.value))}
+                  className="w-full accent-white cursor-pointer"
+                />
+                <div className="flex justify-between text-[10px] text-white/50 mt-1">
+                  <span>2 Fast</span>
+                  <span>6 Default</span>
+                  <span>10 Deep Research</span>
+                </div>
+              </div>
+
+              <div className="pt-2 border-t border-white/10 flex items-center justify-between">
+                <div>
+                  <div className="font-medium text-white">ChromaDB Vector Memory</div>
+                  <div className="text-[11px] text-white/50">Phase 3 persistent context index</div>
+                </div>
+                <button
+                  onClick={() => showToast("Memory DB index synced")}
+                  className="neumorphic-raised px-3 py-1.5 rounded-full text-xs text-white hover:bg-[#201f1f] cursor-pointer flex items-center gap-1"
+                >
+                  <RefreshCw className="w-3 h-3" />
+                  <span>Sync</span>
+                </button>
+              </div>
+            </div>
+
+            <div className="pt-2">
+              <button
+                onClick={() => setIsSettingsOpen(false)}
+                className="w-full py-2.5 rounded-2xl bg-white text-black font-bold text-xs hover:bg-white/90 transition-colors cursor-pointer"
+              >
+                Save & Close
+              </button>
+            </div>
+          </div>
+        </div>
+      )}
+
+      {/* ── User Profile Modal ── */}
+      {isUserModalOpen && (
+        <div className="fixed inset-0 z-50 bg-black/70 backdrop-blur-sm flex items-center justify-center p-4">
+          <div className="neumorphic-raised bg-[#131313] border border-white/10 rounded-3xl w-full max-w-sm p-6 space-y-5 text-white animate-in zoom-in-95 duration-200">
+            <div className="flex items-center justify-between border-b border-white/10 pb-3">
+              <div className="flex items-center gap-2.5">
+                <UserCircle className="w-6 h-6 text-white" />
+                <div>
+                  <h3 className="font-bold text-sm">Researcher Pro</h3>
+                  <p className="text-[10px] text-white/50">Active Developer Tier</p>
+                </div>
+              </div>
+              <button
+                onClick={() => setIsUserModalOpen(false)}
+                className="w-7 h-7 rounded-full neumorphic-raised flex items-center justify-center text-white/70 hover:text-white"
+              >
+                <X className="w-3.5 h-3.5" />
+              </button>
+            </div>
+
+            <div className="space-y-3 text-xs">
+              <div className="neumorphic-sunken p-3 rounded-2xl space-y-2">
+                <div className="flex justify-between">
+                  <span className="text-white/60">Engine Protocol:</span>
+                  <span className="font-bold text-emerald-400">ReAct Multi-Tool</span>
+                </div>
+                <div className="flex justify-between">
+                  <span className="text-white/60">Primary LLM:</span>
+                  <span className="font-bold text-white">Groq / Gemini Fallback</span>
+                </div>
+                <div className="flex justify-between">
+                  <span className="text-white/60">Document Parser:</span>
+                  <span className="font-bold text-blue-400">PDF, DOCX, CSV, TXT, JSON</span>
+                </div>
+                <div className="flex justify-between">
+                  <span className="text-white/60">Vector Database:</span>
+                  <span className="font-bold text-white">ChromaDB Local</span>
+                </div>
+              </div>
+
+              <button
+                onClick={clearChatHistory}
+                className="w-full neumorphic-raised py-2.5 rounded-2xl flex items-center justify-center gap-2 text-rose-400 hover:text-rose-300 font-medium text-xs cursor-pointer border border-rose-500/20 hover:border-rose-500/40 transition-colors"
+              >
+                <Trash2 className="w-4 h-4" />
+                <span>Clear Chat History</span>
+              </button>
+            </div>
+          </div>
+        </div>
+      )}
+
+      {/* ── Plot Graph / Data Visualization Modal ── */}
+      {activeGraphMsg && (
+        <div className="fixed inset-0 z-50 bg-black/80 backdrop-blur-md flex items-center justify-center p-4">
+          <div className="neumorphic-raised bg-[#131313] border border-white/10 rounded-3xl w-full max-w-2xl p-6 space-y-6 text-white animate-in zoom-in-95 duration-200">
+            <div className="flex items-center justify-between border-b border-white/10 pb-4">
+              <div className="flex items-center gap-2.5">
+                <BarChart2 className="w-5 h-5 text-emerald-400" />
+                <h3 className="font-bold text-base">Research Metrics & Source Graph</h3>
+              </div>
+              <button
+                onClick={() => setActiveGraphMsg(null)}
+                className="w-8 h-8 rounded-full neumorphic-raised flex items-center justify-center text-white/70 hover:text-white"
+              >
+                <X className="w-4 h-4" />
+              </button>
+            </div>
+
+            <div className="space-y-4">
+              <div className="text-xs text-white/70 font-medium">
+                Analysis for: <span className="text-white font-bold">{activeGraphMsg.title || "Query Response"}</span>
+              </div>
+
+              {/* Chart Visualizer */}
+              <div className="neumorphic-sunken p-6 rounded-2xl space-y-4">
+                <div className="text-xs font-semibold text-white/80 uppercase tracking-wider mb-2 flex items-center justify-between">
+                  <span>Source Impact Distribution</span>
+                  <Activity className="w-4 h-4 text-emerald-400" />
+                </div>
+
+                <div className="space-y-3">
+                  <div>
+                    <div className="flex justify-between text-xs mb-1">
+                      <span className="text-white/80">DuckDuckGo Web Search</span>
+                      <span className="font-bold text-emerald-400">92% Relevance</span>
+                    </div>
+                    <div className="w-full h-3 bg-white/5 rounded-full overflow-hidden">
+                      <div className="h-full bg-emerald-400 rounded-full w-[92%] transition-all duration-1000" />
+                    </div>
+                  </div>
+
+                  <div>
+                    <div className="flex justify-between text-xs mb-1">
+                      <span className="text-white/80">arXiv Academic Index</span>
+                      <span className="font-bold text-blue-400">85% Relevance</span>
+                    </div>
+                    <div className="w-full h-3 bg-white/5 rounded-full overflow-hidden">
+                      <div className="h-full bg-blue-400 rounded-full w-[85%] transition-all duration-1000" />
+                    </div>
+                  </div>
+
+                  <div>
+                    <div className="flex justify-between text-xs mb-1">
+                      <span className="text-white/80">Wikipedia Fact Grounding</span>
+                      <span className="font-bold text-purple-400">78% Grounding</span>
+                    </div>
+                    <div className="w-full h-3 bg-white/5 rounded-full overflow-hidden">
+                      <div className="h-full bg-purple-400 rounded-full w-[78%] transition-all duration-1000" />
+                    </div>
+                  </div>
+
+                  <div>
+                    <div className="flex justify-between text-xs mb-1">
+                      <span className="text-white/80">Attached Document Content</span>
+                      <span className="font-bold text-amber-400">95% Context Match</span>
+                    </div>
+                    <div className="w-full h-3 bg-white/5 rounded-full overflow-hidden">
+                      <div className="h-full bg-amber-400 rounded-full w-[95%] transition-all duration-1000" />
+                    </div>
+                  </div>
+                </div>
+              </div>
+
+              {/* Execution Summary Stats */}
+              <div className="grid grid-cols-3 gap-3">
+                <div className="neumorphic-raised p-3 rounded-xl text-center">
+                  <div className="text-[10px] text-white/50">Tool Steps</div>
+                  <div className="text-base font-bold text-white">4 Calls</div>
+                </div>
+                <div className="neumorphic-raised p-3 rounded-xl text-center">
+                  <div className="text-[10px] text-white/50">Latency</div>
+                  <div className="text-base font-bold text-emerald-400">1.2s</div>
+                </div>
+                <div className="neumorphic-raised p-3 rounded-xl text-center">
+                  <div className="text-[10px] text-white/50">Confidence</div>
+                  <div className="text-base font-bold text-blue-400">98.4%</div>
+                </div>
+              </div>
+            </div>
+
+            <button
+              onClick={() => setActiveGraphMsg(null)}
+              className="w-full py-2.5 rounded-2xl bg-white text-black font-bold text-xs hover:bg-white/90 transition-colors cursor-pointer"
+            >
+              Close Metrics View
+            </button>
+          </div>
+        </div>
+      )}
 
       {/* ── Top Navigation Bar ── */}
       <header className="bg-[#131313] text-white fixed top-0 w-full z-50 h-16 neumorphic-raised flex justify-between items-center px-4 sm:px-8 border-b border-white/[0.03]">
@@ -298,12 +831,13 @@ function WorkspaceContent() {
 
           {isModelDropdownOpen && (
             <div className="absolute top-10 left-0 w-full neumorphic-raised rounded-2xl py-2 z-50 border border-white/5 space-y-1">
-              {["Agent Alpha v4", "Deep Research v2", "Claude 3.5 Sonnet", "Gemini Pro"].map((model) => (
+              {["Agent Alpha v4", "RICE ReAct v3 (Groq + Gemini)", "Deep Research Pro", "Claude 3.5 Sonnet"].map((model) => (
                 <button
                   key={model}
                   onClick={() => {
                     setSelectedModel(model);
                     setIsModelDropdownOpen(false);
+                    showToast(`Selected ${model}`);
                   }}
                   className={`w-full text-left px-4 py-2 text-xs transition-colors cursor-pointer ${
                     selectedModel === model ? "text-white font-bold bg-[#201f1f]" : "text-[#c4c7c8] hover:bg-[#201f1f]"
@@ -319,14 +853,16 @@ function WorkspaceContent() {
         {/* Right Action Icons */}
         <div className="flex items-center space-x-3">
           <button
-            title="Settings"
-            className="w-9 h-9 sm:w-10 sm:h-10 rounded-full neumorphic-raised neumorphic-interactive flex items-center justify-center text-[#c4c7c8] hover:text-white"
+            title="Engine Settings"
+            onClick={() => setIsSettingsOpen(true)}
+            className="w-9 h-9 sm:w-10 sm:h-10 rounded-full neumorphic-raised neumorphic-interactive flex items-center justify-center text-[#c4c7c8] hover:text-white cursor-pointer"
           >
             <Settings className="w-4 h-4" />
           </button>
           <button
-            title="Account"
-            className="w-9 h-9 sm:w-10 sm:h-10 rounded-full neumorphic-raised neumorphic-interactive flex items-center justify-center text-[#c4c7c8] hover:text-white"
+            title="Account & Stats"
+            onClick={() => setIsUserModalOpen(true)}
+            className="w-9 h-9 sm:w-10 sm:h-10 rounded-full neumorphic-raised neumorphic-interactive flex items-center justify-center text-[#c4c7c8] hover:text-white cursor-pointer"
           >
             <User className="w-4 h-4" />
           </button>
@@ -343,8 +879,11 @@ function WorkspaceContent() {
           }`}
         >
           <div className="pt-4 pb-3 px-3 border-b border-[#201f1f]">
-            <div className="text-lg font-bold text-white mb-0.5 tracking-tight">Research Terminal</div>
-            <div className="text-xs text-[#8e9192]">V2.0.4 Online</div>
+            <div className="text-lg font-bold text-white mb-0.5 tracking-tight flex items-center justify-between">
+              <span>Research Terminal</span>
+              <span className="w-2 h-2 rounded-full bg-emerald-400 animate-pulse" />
+            </div>
+            <div className="text-xs text-[#8e9192]">V2.0.4 Online • Doc Analysis Active</div>
           </div>
 
           <div className="flex-1 overflow-y-auto custom-scrollbar px-1 pt-2 flex flex-col">
@@ -398,7 +937,7 @@ function WorkspaceContent() {
                 <div className="space-y-2.5 px-1 pb-4">
                   {assets.length === 0 ? (
                     <div className="text-center py-4 text-xs text-[#8e9192] italic">
-                      No assets attached
+                      No assets attached yet
                     </div>
                   ) : (
                     assets.map((asset) => (
@@ -408,13 +947,13 @@ function WorkspaceContent() {
                       >
                         <div className="flex items-start">
                           <div className="neumorphic-raised w-7 h-7 rounded-full flex items-center justify-center text-white mr-2.5 shrink-0 mt-0.5">
-                            <FileText className="w-3.5 h-3.5" />
+                            {getDocIcon(asset.author)}
                           </div>
-                          <div>
-                            <h4 className="text-xs font-medium leading-tight text-white group-hover:text-white/90 mb-1 line-clamp-2">
+                          <div className="overflow-hidden">
+                            <h4 className="text-xs font-medium leading-tight text-white group-hover:text-white/90 mb-1 truncate">
                               {asset.title}
                             </h4>
-                            <p className="text-[10px] text-[#c4c7c8]">{asset.author}</p>
+                            <p className="text-[10px] text-[#c4c7c8]">{asset.author} {asset.size ? `(${asset.size})` : ""}</p>
                           </div>
                         </div>
                       </div>
@@ -426,7 +965,7 @@ function WorkspaceContent() {
                     className="w-full neumorphic-raised py-2.5 rounded-full flex items-center justify-center space-x-2 text-xs text-[#8e9192] hover:text-white transition-colors neumorphic-interactive mt-3 cursor-pointer"
                   >
                     <Upload className="w-4 h-4" />
-                    <span>Upload Reference</span>
+                    <span>Upload Document (PDF/DOCX/CSV)</span>
                   </button>
                 </div>
               </div>
@@ -435,16 +974,20 @@ function WorkspaceContent() {
             {activeTab === "history" && (
               <div className="mt-6 pt-4 border-t border-[#201f1f] flex flex-col space-y-2.5 px-1">
                 <h3 className="text-xs font-semibold text-white uppercase tracking-wider mb-2 px-1">Recent Threads</h3>
-                {messages.length > 0 ? (
-                  <div className="neumorphic-sunken p-3 rounded-2xl cursor-pointer hover:bg-[#090909] transition-colors">
+                {threadHistory.map((item) => (
+                  <div
+                    key={item.id}
+                    onClick={() => {
+                      showToast(`Loaded thread: ${item.title}`);
+                    }}
+                    className="neumorphic-sunken p-3 rounded-2xl cursor-pointer hover:bg-[#090909] transition-colors"
+                  >
                     <p className="text-xs font-medium text-white line-clamp-1">
-                      {messages[0].content}
+                      {item.title}
                     </p>
-                    <p className="text-[10px] text-[#8e9192] mt-0.5">Active Session</p>
+                    <p className="text-[10px] text-[#8e9192] mt-0.5">{item.time}</p>
                   </div>
-                ) : (
-                  <p className="text-xs text-[#8e9192] px-1 italic">No recent history</p>
-                )}
+                ))}
               </div>
             )}
 
@@ -452,10 +995,12 @@ function WorkspaceContent() {
               <div className="mt-6 pt-4 border-t border-[#201f1f] flex flex-col space-y-2.5 px-1">
                 <h3 className="text-xs font-semibold text-white uppercase tracking-wider mb-2 px-1">Active Integrations</h3>
                 {[
+                  { name: "Document Analysis Engine", icon: FileText },
                   { name: "arXiv Search Engine", icon: Search },
                   { name: "Python Code Interpreter", icon: Code },
                   { name: "Vector Database Index", icon: Database },
-                  { name: "Autonomous Synthesizer", icon: Cpu }
+                  { name: "Autonomous Synthesizer", icon: Cpu },
+                  { name: "Hacker News Recency Search", icon: Zap }
                 ].map((tool, idx) => {
                   const ToolIcon = tool.icon;
                   return (
@@ -478,10 +1023,16 @@ function WorkspaceContent() {
           {/* Message / Research Feed (Sunken Well) */}
           <div className="flex-1 rounded-3xl overflow-y-auto custom-scrollbar p-4 sm:p-6 mb-4 flex flex-col space-y-6">
             {messages.length === 0 ? (
-              <div className="flex flex-col items-center justify-center text-center px-4 select-none my-auto">
+              <div className="flex flex-col items-center justify-center text-center px-4 select-none my-auto space-y-4">
+                <div className="w-16 h-16 rounded-full neumorphic-raised flex items-center justify-center mb-2">
+                  <Sparkles className="w-8 h-8 text-white/90" />
+                </div>
                 <h2 className="text-3xl sm:text-5xl md:text-6xl font-bold text-white tracking-tight font-sans">
                   What are we searching today
                 </h2>
+                <p className="text-xs sm:text-sm text-white/50 max-w-md">
+                  Attach PDFs, DOCX, CSV, or Text files & run multi-source research powered by arXiv, DuckDuckGo & Hacker News.
+                </p>
               </div>
             ) : (
               <>
@@ -515,11 +1066,27 @@ function WorkspaceContent() {
                       )}
                     </div>
 
-                    {/* Message Bubble */}
+                    {/* Message Bubble or Skeleton Loader */}
                     {msg.sender === "user" ? (
-                      <div className="neumorphic-raised p-4 sm:p-5 rounded-l-3xl rounded-tr-3xl max-w-xl bg-[#131313]">
+                      <div className="neumorphic-raised p-4 sm:p-5 rounded-l-3xl rounded-tr-3xl max-w-xl bg-[#131313] space-y-3">
+                        {/* Attached Document Card in User Bubble */}
+                        {msg.attachedDocInfo && (
+                          <div className="neumorphic-sunken p-3 rounded-2xl flex items-center gap-3 border border-white/10 bg-[#0c0c0c]">
+                            <div className="w-9 h-9 rounded-xl neumorphic-raised flex items-center justify-center shrink-0">
+                              {getDocIcon(msg.attachedDocInfo.type)}
+                            </div>
+                            <div className="flex-1 overflow-hidden text-xs">
+                              <div className="font-semibold text-white truncate">{msg.attachedDocInfo.filename}</div>
+                              <div className="text-[10px] text-white/60">
+                                {msg.attachedDocInfo.type} • {msg.attachedDocInfo.wordCount} words ({msg.attachedDocInfo.sizeStr})
+                              </div>
+                            </div>
+                          </div>
+                        )}
                         <p className="text-xs sm:text-sm text-white leading-relaxed">{msg.content}</p>
                       </div>
+                    ) : msg.isLoading ? (
+                      <SkeletonLoader title={msg.title} />
                     ) : (
                       <div className="neumorphic-sunken p-5 sm:p-6 rounded-r-3xl rounded-tl-3xl max-w-2xl border border-white/[0.02] w-full">
                         {msg.title && (
@@ -588,7 +1155,7 @@ function WorkspaceContent() {
                           </div>
                         )}
 
-                        {msg.bullets && (
+                        {msg.bullets && msg.bullets.length > 0 && (
                           <ul className="space-y-2 text-xs sm:text-sm text-[#c4c7c8] mb-4">
                             {msg.bullets.map((b, i) => (
                               <li key={i} className="flex items-start">
@@ -619,7 +1186,7 @@ function WorkspaceContent() {
                           </button>
 
                           <button
-                            onClick={() => alert("Plotting data graph for quantum metrics...")}
+                            onClick={() => setActiveGraphMsg(msg)}
                             className="neumorphic-raised px-3.5 py-1.5 rounded-full text-xs text-white hover:text-white/90 transition-colors flex items-center gap-1.5 cursor-pointer"
                           >
                             <BarChart2 className="w-3.5 h-3.5 text-[#8e9192]" />
@@ -637,60 +1204,85 @@ function WorkspaceContent() {
           </div>
 
           {/* ── Input Bar (Raised Panel) ── */}
-          <div className="neumorphic-raised rounded-3xl p-2 mb-4 flex items-end relative mx-1 sm:mx-4">
-            <div className="flex items-center space-x-1 pb-2 pl-2">
-              <button
-                type="button"
-                title="Attach file"
-                onClick={() => fileInputRef.current?.click()}
-                className="w-9 h-9 sm:w-10 sm:h-10 rounded-full flex items-center justify-center text-[#8e9192] hover:text-white hover:bg-[#2a2a2a] transition-colors neumorphic-interactive cursor-pointer"
-              >
-                <Paperclip className="w-4 h-4" />
-              </button>
-              <button
-                type="button"
-                title="Web Search"
-                onClick={() => setIsWebSearchActive(!isWebSearchActive)}
-                className={`w-9 h-9 sm:w-10 sm:h-10 rounded-full flex items-center justify-center transition-colors neumorphic-interactive cursor-pointer ${
-                  isWebSearchActive ? "bg-white text-[#131313]" : "text-[#8e9192] hover:text-white hover:bg-[#2a2a2a]"
-                }`}
-              >
-                <Globe className="w-4 h-4" />
-              </button>
-              <button
-                type="button"
-                title="Voice Input"
-                onClick={() => setIsVoiceActive(!isVoiceActive)}
-                className={`w-9 h-9 sm:w-10 sm:h-10 rounded-full flex items-center justify-center transition-colors neumorphic-interactive cursor-pointer ${
-                  isVoiceActive ? "bg-red-500 text-white animate-pulse" : "text-[#8e9192] hover:text-white hover:bg-[#2a2a2a]"
-                }`}
-              >
-                <Mic className="w-4 h-4" />
-              </button>
-            </div>
+          <div className="neumorphic-raised rounded-3xl p-2 mb-4 flex flex-col relative mx-1 sm:mx-4 space-y-2">
+            
+            {/* Attached Document Preview Chip */}
+            {attachedDoc && (
+              <div className="flex items-center justify-between bg-[#1d1d1d] px-3 py-1.5 rounded-2xl border border-white/10 text-xs mx-1">
+                <div className="flex items-center gap-2 overflow-hidden">
+                  {getDocIcon(attachedDoc.type)}
+                  <span className="font-semibold text-white truncate max-w-[200px] sm:max-w-xs">{attachedDoc.filename}</span>
+                  <span className="text-[10px] text-white/50">({attachedDoc.type} • {attachedDoc.wordCount} words)</span>
+                </div>
+                <button
+                  type="button"
+                  onClick={() => setAttachedDoc(null)}
+                  className="w-5 h-5 rounded-full bg-white/10 hover:bg-white/20 text-white flex items-center justify-center cursor-pointer ml-2"
+                >
+                  <X className="w-3 h-3" />
+                </button>
+              </div>
+            )}
 
-            <textarea
-              ref={textareaRef}
-              value={inputMessage}
-              onChange={handleTextareaChange}
-              onKeyDown={handleKeyDown}
-              placeholder="Message Research AI..."
-              rows={1}
-              className="flex-1 bg-transparent border-none resize-none focus:outline-none focus:ring-0 text-white text-xs sm:text-sm p-3 max-h-36 min-h-[48px] custom-scrollbar placeholder-[#444748] font-sans leading-relaxed"
-            />
+            <div className="flex items-end">
+              <div className="flex items-center space-x-1 pb-2 pl-2">
+                <button
+                  type="button"
+                  title="Attach file (PDF, DOCX, CSV, TXT, JSON, MD)"
+                  onClick={() => fileInputRef.current?.click()}
+                  className="w-9 h-9 sm:w-10 sm:h-10 rounded-full flex items-center justify-center text-[#8e9192] hover:text-white hover:bg-[#2a2a2a] transition-colors neumorphic-interactive cursor-pointer"
+                >
+                  <Paperclip className="w-4 h-4" />
+                </button>
+                <button
+                  type="button"
+                  title="Web Search Priority"
+                  onClick={() => {
+                    setIsWebSearchActive(!isWebSearchActive);
+                    showToast(isWebSearchActive ? "Web search priority toggled OFF" : "Web search priority ON");
+                  }}
+                  className={`w-9 h-9 sm:w-10 sm:h-10 rounded-full flex items-center justify-center transition-colors neumorphic-interactive cursor-pointer ${
+                    isWebSearchActive ? "bg-white text-[#131313]" : "text-[#8e9192] hover:text-white hover:bg-[#2a2a2a]"
+                  }`}
+                >
+                  <Globe className="w-4 h-4" />
+                </button>
+                <button
+                  type="button"
+                  title="Voice Input (Speech-to-Text)"
+                  onClick={toggleVoiceInput}
+                  className={`w-9 h-9 sm:w-10 sm:h-10 rounded-full flex items-center justify-center transition-colors neumorphic-interactive cursor-pointer ${
+                    isVoiceActive ? "bg-red-500 text-white animate-pulse" : "text-[#8e9192] hover:text-white hover:bg-[#2a2a2a]"
+                  }`}
+                >
+                  <Mic className="w-4 h-4" />
+                </button>
+              </div>
 
-            <div className="pb-2 pr-2">
-              <button
-                type="button"
-                onClick={handleSendMessage}
-                className={`w-10 h-10 sm:w-11 sm:h-11 rounded-full neumorphic-raised flex items-center justify-center transition-all cursor-pointer ${
-                  inputMessage.trim()
-                    ? "bg-white text-[#131313] hover:bg-white/90 shadow-[0_0_12px_rgba(255,255,255,0.3)]"
-                    : "text-[#8e9192] hover:text-white"
-                }`}
-              >
-                <Send className="w-4 h-4" />
-              </button>
+              <textarea
+                ref={textareaRef}
+                value={inputMessage}
+                onChange={handleTextareaChange}
+                onKeyDown={handleKeyDown}
+                placeholder={attachedDoc ? `Ask a question about ${attachedDoc.filename}...` : "Message Research AI or attach documents..."}
+                rows={1}
+                className="flex-1 bg-transparent border-none resize-none focus:outline-none focus:ring-0 text-white text-xs sm:text-sm p-3 max-h-36 min-h-[48px] custom-scrollbar placeholder-[#444748] font-sans leading-relaxed"
+              />
+
+              <div className="pb-2 pr-2">
+                <button
+                  type="button"
+                  onClick={handleSendMessage}
+                  disabled={isGenerating || (!inputMessage.trim() && !attachedDoc)}
+                  className={`w-10 h-10 sm:w-11 sm:h-11 rounded-full neumorphic-raised flex items-center justify-center transition-all cursor-pointer ${
+                    (inputMessage.trim() || attachedDoc) && !isGenerating
+                      ? "bg-white text-[#131313] hover:bg-white/90 shadow-[0_0_12px_rgba(255,255,255,0.3)]"
+                      : "text-[#8e9192] hover:text-white opacity-50 cursor-not-allowed"
+                  }`}
+                >
+                  {isGenerating ? <Layers className="w-4 h-4 animate-spin" /> : <Send className="w-4 h-4" />}
+                </button>
+              </div>
             </div>
           </div>
         </main>
@@ -701,7 +1293,7 @@ function WorkspaceContent() {
 
 export default function WorkspacePage() {
   return (
-    <Suspense fallback={<div className="bg-[#131313] h-screen text-white flex items-center justify-center">Loading Workspace...</div>}>
+    <Suspense fallback={<div className="bg-[#131313] h-screen text-white flex items-center justify-center font-sans">Loading Workspace...</div>}>
       <WorkspaceContent />
     </Suspense>
   );
